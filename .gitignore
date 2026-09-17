@@ -1,0 +1,26 @@
+# Python
+*.pyc
+__pycache__/
+*.egg-info/
+
+# Databases
+*.db
+*.sqlite
+
+# Process IDs
+*.pid
+
+# Virtual environments
+venv/
+.env
+
+# Logs
+*.log
+
+# Build artifacts
+*.egg
+*.egg-info
+*.dist-info
+build/
+dist/
+*.egg-info
