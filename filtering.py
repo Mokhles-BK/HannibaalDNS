@@ -3,6 +3,7 @@ import threading
 import time
 import urllib.request
 from database import Database
+from anomaly_detection import AnomalyDetector
 
 class FilteringEngine:
     def __init__(self, blocklist_url="https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts", db_path="hannibaaldns.db"):
@@ -11,7 +12,8 @@ class FilteringEngine:
         self.allowlist = set(["localhost"])
         self.lock = threading.Lock()
         self.last_refresh_time = time.time()
-        self.db = Database(db_path)
+        self.anomaly_detector = AnomalyDetector(db_path)
+        self.db = Database(db_path, query_callback=self.anomaly_detector.record_query)
         self.load_blocklist()
 
         # Start background refresh thread

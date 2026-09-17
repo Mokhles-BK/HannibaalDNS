@@ -2,14 +2,13 @@ import sqlite3
 import threading
 import queue
 from datetime import datetime
-import anomaly_detection
 
 class Database:
-    def __init__(self, db_path="hannibaaldns.db"):
+    def __init__(self, db_path="hannibaaldns.db", query_callback=None):
         self.db_path = db_path
         self.lock = threading.Lock()
         self.log_queue = queue.Queue(maxsize=1000)
-        self.anomaly_detector = anomaly_detection.AnomalyDetector(db_path)
+        self.query_callback = query_callback
         self.init_db()
 
         # Start background writer thread for non-blocking logging
@@ -110,8 +109,8 @@ class Database:
             conn.close()
 
     def log_query(self, client_ip, domain, query_type, blocked, response_time):
-        # Record query for anomaly detection
-        self.anomaly_detector.record_query(client_ip, domain, query_type, blocked, response_time)
+        if self.query_callback is not None:
+            self.query_callback(client_ip, domain, query_type, blocked, response_time)
 
         try:
             self.log_queue.put_nowait((client_ip, domain, query_type, blocked, response_time))

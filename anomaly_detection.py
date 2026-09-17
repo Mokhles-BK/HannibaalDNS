@@ -102,6 +102,22 @@ class AnomalyDetector:
             except Exception as e:
                 print(f"[Error] Failed to write anomaly log to DB: {e}")
 
+    def _get_anomaly_check_key(self, domain, client_ip):
+        """Return a stable dedup key based only on which checks fired, not live counts.
+
+        The key uses check type names without embedded counts/values that change
+        per-tick, so the same domain triggering the same checks will produce the
+        same key regardless of query frequency, entropy values, etc.
+        """
+        check_types = []
+        if self._check_subdomain_length(domain):
+            check_types.append("subdomain_length")
+        if self._check_query_frequency(domain):
+            check_types.append("query_frequency")
+        if self._check_entropy(domain):
+            check_types.append("entropy")
+        return (domain, tuple(sorted(check_types)))
+
     def _anomaly_detection_loop(self):
         while True:
             time.sleep(1)
@@ -127,7 +143,8 @@ class AnomalyDetector:
                     reasons_str = ', '.join(reasons)
 
                     # Check if we should log this anomaly (cooldown check)
-                    key = (domain, reasons_str)
+                    # Use stable key without live counts for dedup
+                    key = self._get_anomaly_check_key(domain, client_ip)
                     if key not in self.last_anomaly_logged or current_time - self.last_anomaly_logged[key] > self.anomaly_cooldown:
                         print(f"[ANOMALY] Domain: {domain}, Client: {client_ip}, Score: {score:.2f}, Reasons: {reasons_str}")
 
