@@ -93,6 +93,187 @@ def clients():
     result = [dict(zip(columns, row)) for row in rows]
     return jsonify(result)
 
+# ---------------------------------------------------------------------------
+# Allowlist / Denylist management (per-client, NextDNS-style)
+# Reuses Database.get_profile() / Database.set_profile(); no global list.
+# ---------------------------------------------------------------------------
+
+@app.route('/api/clients/<client_ip>/lists', methods=['GET'])
+def get_client_lists(client_ip):
+    """Return custom_blocklist and custom_allowlist for this client."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('''
+        SELECT profile_name, custom_blocklist, custom_allowlist
+        FROM client_profiles WHERE ip_address = ?
+    ''', (client_ip,))
+    row = cur.fetchone()
+    conn.close()
+
+    if row:
+        blocklist = [d for d in (row[1].split(',') if row[1] else []) if d]
+        allowlist = [d for d in (row[2].split(',') if row[2] else []) if d]
+    else:
+        blocklist, allowlist = [], []
+
+    return jsonify({
+        'client_ip': client_ip,
+        'profile_name': row[0] if row else 'default',
+        'custom_blocklist': blocklist,
+        'custom_allowlist': allowlist,
+    })
+
+
+@app.route('/api/clients/<client_ip>/lists', methods=['POST'])
+def update_client_lists(client_ip):
+    """
+    Add or remove a domain from this client's allowlist or denylist.
+
+    Body (JSON), one of:
+      {"action": "add",    "list": "allowlist", "domain": "example.com"}
+      {"action": "remove", "list": "denylist",  "domain": "example.com"}
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'error': 'Request body must be valid JSON'}), 400
+
+    action = data.get('action')
+    list_name = data.get('list')
+    domain = (data.get('domain') or '').strip().lower().rstrip('.')
+
+    if action not in ('add', 'remove'):
+        return jsonify({'error': "action must be 'add' or 'remove'"}), 400
+    if list_name not in ('allowlist', 'denylist'):
+        return jsonify({'error': "list must be 'allowlist' or 'denylist'"}), 400
+    if not domain:
+        return jsonify({'error': 'domain must be a non-empty string'}), 400
+    if ',' in domain:
+        return jsonify({'error': 'domain must not contain commas'}), 400
+
+    # Read current lists
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('''
+        SELECT profile_name, custom_blocklist, custom_allowlist
+        FROM client_profiles WHERE ip_address = ?
+    ''', (client_ip,))
+    row = cur.fetchone()
+    conn.close()
+
+    profile_name = row[0] if row else 'default'
+    blocklist = [d for d in (row[1].split(',') if row and row[1] else []) if d]
+    allowlist = [d for d in (row[2].split(',') if row and row[2] else []) if d]
+
+    if list_name == 'allowlist':
+        target = allowlist
+    else:
+        target = blocklist
+
+    if action == 'add':
+        if domain in target:
+            return jsonify({'status': 'already_present', 'list': list_name,
+                            'domain': domain, 'client_ip': client_ip})
+        target.append(domain)
+    else:  # remove
+        if domain not in target:
+            return jsonify({'status': 'not_found', 'list': list_name,
+                            'domain': domain, 'client_ip': client_ip})
+        target.remove(domain)
+
+    try:
+        doh_engine.db.set_profile(client_ip, profile_name,
+                                  custom_blocklist=blocklist or None,
+                                  custom_allowlist=allowlist or None)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    return jsonify({
+        'status': 'ok',
+        'action': action,
+        'list': list_name,
+        'domain': domain,
+        'client_ip': client_ip,
+        'custom_blocklist': blocklist,
+        'custom_allowlist': allowlist,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Analytics-style breakdown (query_log / anomaly_log only — no GeoIP, no
+# DNSSEC%, no encrypted-DNS% since none of that is tracked in the schema)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/analytics/top-domains', methods=['GET'])
+def top_domains():
+    """Top N domains from query_log, split by blocked / resolved."""
+    blocked = request.args.get('blocked')
+    limit = request.args.get('limit', default=10, type=int)
+    if limit < 1:
+        limit = 1
+    if limit > 1000:
+        limit = 1000
+
+    where = ''
+    params = []
+    if blocked is not None:
+        if blocked in ('true', '1', 'yes'):
+            where = 'WHERE blocked = 1'
+        elif blocked in ('false', '0', 'no'):
+            where = 'WHERE blocked = 0'
+        else:
+            return jsonify({'error': "blocked must be 'true' or 'false'"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(f'''
+        SELECT domain, COUNT(*) as count
+        FROM query_log
+        {where}
+        GROUP BY domain
+        ORDER BY count DESC, domain ASC
+        LIMIT ?
+    ''', (limit,))
+    rows = cur.fetchall()
+    conn.close()
+
+    result = [{'domain': r[0], 'count': r[1]} for r in rows]
+    return jsonify(result)
+
+
+@app.route('/api/analytics/summary', methods=['GET'])
+def analytics_summary():
+    """Total queries, blocked count, percent blocked over a time window."""
+    hours = request.args.get('hours', default=24, type=int)
+    if hours < 1:
+        hours = 1
+    if hours > 8760:  # 1 year
+        hours = 8760
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('''
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN blocked = 1 THEN 1 ELSE 0 END) as blocked_count
+        FROM query_log
+        WHERE timestamp > datetime('now', '-' || ? || ' hours')
+    ''', (hours,))
+    row = cur.fetchone()
+    conn.close()
+
+    total = row[0] or 0
+    blocked_count = row[1] or 0
+    pct = (blocked_count / total * 100.0) if total else 0.0
+
+    return jsonify({
+        'window_hours': hours,
+        'total_queries': total,
+        'blocked_queries': blocked_count,
+        'resolved_queries': total - blocked_count,
+        'percent_blocked': round(pct, 2),
+    })
+
+
 # DNS-over-HTTPS (RFC 8484) endpoints
 @app.route('/dns-query', methods=['GET'])
 def doh_get():
