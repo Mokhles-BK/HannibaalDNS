@@ -24,3 +24,8 @@ venv/
 build/
 dist/
 *.egg-info
+
+# Node / React frontend
+node_modules/
+phase5/frontend/node_modules/
+phase5/frontend/build/
