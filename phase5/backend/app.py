@@ -8,6 +8,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from dns_resolver import resolve_query
 from filtering import FilteringEngine
+from dnslib import DNSError
 
 app = Flask(__name__)
 
@@ -287,6 +288,15 @@ def doh_get():
         dns_bytes = base64.urlsafe_b64decode(dns_param + '=' * (-len(dns_param) % 4))
     except Exception as e:
         return Response(f'Invalid base64url encoding: {e}', status=400, mimetype='text/plain')
+
+    try:
+        # Validate the payload is a real DNS message before forwarding it.
+        # Without this, a base64url string that decodes to garbage (e.g.
+        # '!!!bad' -> 2 bytes) leaks an unhandled DNSError as a 500.
+        from dnslib import DNSRecord
+        DNSRecord.parse(dns_bytes)
+    except DNSError as e:
+        return Response(f'Invalid DNS message: {e}', status=400, mimetype='text/plain')
 
     client_ip = request.remote_addr or 'unknown'
     response_bytes = resolve_query(dns_bytes, client_ip, UPSTREAM_DNS, doh_engine)

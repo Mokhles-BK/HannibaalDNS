@@ -29,3 +29,8 @@ dist/
 node_modules/
 phase5/frontend/node_modules/
 phase5/frontend/build/
+
+# Auto-generated DoT TLS material (created on first dot_server.py run)
+hannibaaldns.crt
+hannibaaldns.key
+hannibaaldns.cnf
