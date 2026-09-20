@@ -7,22 +7,32 @@ from dnslib import DNSRecord, DNSHeader, RR, QTYPE, A, DNSError, RCODE
 from dnslib.server import DNSServer, BaseResolver
 from filtering import FilteringEngine
 from dns_resolver import resolve_query
+import config
 
 sys.stdout.reconfigure(line_buffering=True)
 
 class SimpleResolver(BaseResolver):
-    def __init__(self, upstream_dns, engine):
+    def __init__(self, upstream_dns, engine, upstream_port=None):
         self.upstream_dns = upstream_dns
+        self.upstream_port = upstream_port
         self.engine = engine
 
     def resolve(self, request, handler):
         client_ip = handler.client_address[0] if handler else 'unknown'
         raw_request = request.pack()
-        return DNSRecord.parse(resolve_query(raw_request, client_ip, self.upstream_dns, self.engine))
+        return DNSRecord.parse(resolve_query(
+            raw_request, client_ip, self.upstream_dns, self.engine,
+            self.upstream_port,
+        ))
 
-def run_dns_server(upstream_dns='8.8.8.8', port=5053):
+def run_dns_server(upstream_dns=None, port=None, upstream_port=None):
+    # Defaults looked up at call time (config may be overridden via env).
+    upstream_dns = config.UPSTREAM_DNS if upstream_dns is None else upstream_dns
+    port = config.UDP_PORT if port is None else port
+    upstream_port = config.UPSTREAM_PORT if upstream_port is None else upstream_port
+
     engine = FilteringEngine()
-    resolver = SimpleResolver(upstream_dns, engine)
+    resolver = SimpleResolver(upstream_dns, engine, upstream_port)
     server = DNSServer(resolver, port=port)
 
     print(f"Starting DNS server on port {port}...")

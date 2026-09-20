@@ -33,7 +33,7 @@ query arrives (UDP:5053 | DoH:5000 | DoT:853)
 - **`phase5/backend/app.py`** — Flask API serving the DoH endpoints
   (`/dns-query` GET/POST) plus the dashboard JSON API.
 - **`dot_server.py`** — DNS-over-TLS on port 853 (TCP socket wrapped in TLS,
-  RFC 7854 2-byte length framing).
+  RFC 7858; 2-byte length framing per RFC 7766 / RFC 1035 §4.2.2).
 - **`phase5/frontend/`** — Create React App dashboard (Overview / Allowlist-Denylist /
   Analytics), built to `phase5/frontend/build/`.
 
@@ -101,7 +101,23 @@ python test_bug1_decoupling.py
 python verify_entropy_thresholds.py
 ```
 
-`test_dns_server.py` and `test_phase3.py` exercise a live UDP server. Note:
+`test_dns_server.py` and `test_phase3.py` exercise a live UDP server.
+
+**Stub upstream** (`tools/stub_upstream.py`) — a test-only authoritative
+nameserver that always answers `198.51.100.7` for any A query. Use it to
+verify config overrides without hitting the internet:
+
+```bash
+# Terminal 1
+HANNIBAALNS_UPSTREAM_PORT=15353 python tools/stub_upstream.py
+
+# Terminal 2
+HANNIBAALNS_UPSTREAM_DNS=127.0.0.1 HANNIBAALNS_UPSTREAM_PORT=15353 python dns_server.py
+
+# Terminal 3 (client)
+dig @127.0.0.1 -p 5053 google.com A
+# Expect: 198.51.100.7 (stub's signature answer)
+``` Note:
 `test_phase3.py` has a known harness bug — it sets up client profiles keyed on
 `192.168.1.100/101` but never binds a source socket, so every query is logged
 as `127.0.0.1` and the profile lookup misses. `verify_live_wiring.py` is the
@@ -110,7 +126,7 @@ IP); prefer it.
 
 ## DoT — implemented, not deferred
 
-DNS-over-TLS (RFC 7854, port 853) was listed in the original Phase 1 spec and
+DNS-over-TLS (RFC 7858, port 853) was listed in the original Phase 1 spec and
 was **implemented** rather than deferred. Rationale for completeness over
 elegance: a resolver that only speaks plain UDP cannot answer "do I have a
 privacy-preserving transport?", and the cost of adding DoT was small once

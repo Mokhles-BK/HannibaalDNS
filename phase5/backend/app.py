@@ -9,15 +9,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from dns_resolver import resolve_query
 from filtering import FilteringEngine
 from dnslib import DNSError
+import config
 
 app = Flask(__name__)
 
-# Database path: project root (hannibaaldns.db)
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'hannibaaldns.db'))
-
 # Initialize shared FilteringEngine instance for DoH (reuses same logic as UDP)
-doh_engine = FilteringEngine(db_path=DB_PATH)
-UPSTREAM_DNS = '8.8.8.8'
+doh_engine = FilteringEngine()
+UPSTREAM_DNS = config.UPSTREAM_DNS
+UPSTREAM_PORT = config.UPSTREAM_PORT
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -299,7 +298,8 @@ def doh_get():
         return Response(f'Invalid DNS message: {e}', status=400, mimetype='text/plain')
 
     client_ip = request.remote_addr or 'unknown'
-    response_bytes = resolve_query(dns_bytes, client_ip, UPSTREAM_DNS, doh_engine)
+    response_bytes = resolve_query(dns_bytes, client_ip, UPSTREAM_DNS, doh_engine,
+                                   UPSTREAM_PORT)
     return Response(response_bytes, mimetype='application/dns-message')
 
 
@@ -315,9 +315,10 @@ def doh_post():
         return Response('Empty request body', status=400, mimetype='text/plain')
 
     client_ip = request.remote_addr or 'unknown'
-    response_bytes = resolve_query(dns_bytes, client_ip, UPSTREAM_DNS, doh_engine)
+    response_bytes = resolve_query(dns_bytes, client_ip, UPSTREAM_DNS, doh_engine,
+                                   UPSTREAM_PORT)
     return Response(response_bytes, mimetype='application/dns-message')
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=config.DOH_PORT)

@@ -4,9 +4,10 @@ import time
 import urllib.request
 from database import Database
 from anomaly_detection import AnomalyDetector
+import config
 
 class FilteringEngine:
-    def __init__(self, blocklist_url="https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts", db_path="hannibaaldns.db"):
+    def __init__(self, blocklist_url=config.BLOCKLIST_URL, db_path=config.DB_PATH):
         self.blocklist_url = blocklist_url
         self.blocked_domains = set()
         self.allowlist = set(["localhost"])

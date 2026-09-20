@@ -1,11 +1,13 @@
 """
-DNS-over-TLS (RFC 7854) endpoint on port 853.
+DNS-over-TLS (RFC 7858) endpoint on port 853.
 
 Wraps a plain TCP socket in TLS and reuses the shared resolve_query()
 logic from dns_resolver.py, so DoT applies exactly the same filtering,
 per-client profiles, and query logging as UDP and DoH.
 
-Message framing is the standard 2-byte length prefix (RFC 8484/TCP):
+Message framing is the standard 2-byte length prefix per RFC 7766
+(TCP transport for DNS) and RFC 1035 Section 4.2.2 (message length
+prefix for TCP):
     [0] [1] [2] ... [N]
     uint16 length (big-endian) followed by that many bytes of DNS message.
 
@@ -23,11 +25,12 @@ import time
 from dnslib import DNSError
 from filtering import FilteringEngine
 from dns_resolver import resolve_query
+import config
 
 sys.stdout.reconfigure(line_buffering=True)
 
-CERT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hannibaaldns.crt")
-KEY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hannibaaldns.key")
+CERT_PATH = config.CERT_PATH
+KEY_PATH = config.KEY_PATH
 
 
 def _generate_self_signed_cert(cert_path, key_path):
@@ -111,7 +114,7 @@ def _ensure_cert(cert_path, key_path):
         )
 
 
-def _handle_client(conn, engine, upstream_dns):
+def _handle_client(conn, engine, upstream_dns, upstream_port):
     """Read one or more length-prefixed DNS messages from a TLS socket."""
     client_ip = conn.getpeername()[0]
     buf = b''
@@ -132,20 +135,29 @@ def _handle_client(conn, engine, upstream_dns):
             message = buf[:length]
             buf = buf[length:]
 
-            response = resolve_query(message, client_ip, upstream_dns, engine)
+            response = resolve_query(message, client_ip, upstream_dns, engine,
+                                     upstream_port)
             conn.sendall(len(response).to_bytes(2, 'big') + response)
         except (ConnectionError, OSError, DNSError) as e:
             print(f"DoT client {client_ip} disconnected: {e}")
             return
 
 
-def run_dot_server(upstream_dns='8.8.8.8', port=853, host='0.0.0.0'):
-    _ensure_cert(CERT_PATH, KEY_PATH)
+def run_dot_server(upstream_dns=None, port=None, host=None, upstream_port=None):
+    # Defaults evaluated at call time, not definition time — avoids the
+    # classic Python default-argument trap where config values were
+    # frozen at import time.
+    upstream_dns = config.UPSTREAM_DNS if upstream_dns is None else upstream_dns
+    port = config.DOT_PORT if port is None else port
+    host = config.DOT_BIND_HOST if host is None else host
+    upstream_port = config.UPSTREAM_PORT if upstream_port is None else upstream_port
+
+    _ensure_cert(config.CERT_PATH, config.KEY_PATH)
 
     engine = FilteringEngine()
 
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.load_cert_chain(CERT_PATH, KEY_PATH)
+    ctx.load_cert_chain(config.CERT_PATH, config.KEY_PATH)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -179,6 +191,7 @@ def run_dot_server(upstream_dns='8.8.8.8', port=853, host='0.0.0.0'):
 
 
 if __name__ == '__main__':
-    upstream = sys.argv[1] if len(sys.argv) > 1 else '8.8.8.8'
-    p = int(sys.argv[2]) if len(sys.argv) > 2 else 853
-    run_dot_server(upstream, p)
+    upstream = sys.argv[1] if len(sys.argv) > 1 else None
+    p = int(sys.argv[2]) if len(sys.argv) > 2 else None
+    up = int(sys.argv[3]) if len(sys.argv) > 3 else None
+    run_dot_server(upstream, p, None, up)

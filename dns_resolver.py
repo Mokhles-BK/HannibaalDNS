@@ -4,21 +4,26 @@ Refactored from dns_server.py to avoid duplication.
 """
 import time
 from dnslib import DNSRecord, DNSHeader, RR, QTYPE, A, DNSError, RCODE
+import config
 
 
-def resolve_query(raw_request_bytes: bytes, client_ip: str, upstream_dns: str, engine) -> bytes:
+def resolve_query(raw_request_bytes: bytes, client_ip: str, upstream_dns: str,
+                  engine, upstream_port=None) -> bytes:
     """
-    Core DNS resolution logic shared by UDP and DoH endpoints.
+    Core DNS resolution logic shared by UDP, DoH, and DoT endpoints.
 
     Args:
         raw_request_bytes: Raw DNS query message bytes
         client_ip: Client IP address for filtering and logging
         upstream_dns: Upstream DNS server IP
         engine: FilteringEngine instance for blocking checks
+        upstream_port: Upstream DNS server port (default: config.UPSTREAM_PORT)
 
     Returns:
         Raw DNS response message bytes
     """
+    if upstream_port is None:
+        upstream_port = config.UPSTREAM_PORT
     # dnslib's RR.pack()/reply.pack() returns bytearray; Flask's WSGI server
     # requires real bytes, so normalize the return type here.
     request = DNSRecord.parse(raw_request_bytes)
@@ -41,7 +46,7 @@ def resolve_query(raw_request_bytes: bytes, client_ip: str, upstream_dns: str, e
     # Forward the query to the upstream DNS server
     try:
         upstream_request = DNSRecord.question(qname, qtype=qtype)
-        raw_response = upstream_request.send(upstream_dns, 53, timeout=5)
+        raw_response = upstream_request.send(upstream_dns, upstream_port, timeout=5)
         upstream_response = DNSRecord.parse(raw_response)
 
         # Set the transaction ID to match the request

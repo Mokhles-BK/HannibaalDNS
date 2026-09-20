@@ -2,9 +2,10 @@ import sqlite3
 import threading
 import queue
 from datetime import datetime
+import config
 
 class Database:
-    def __init__(self, db_path="hannibaaldns.db", query_callback=None):
+    def __init__(self, db_path=config.DB_PATH, query_callback=None):
         self.db_path = db_path
         self.lock = threading.Lock()
         self.log_queue = queue.Queue(maxsize=1000)
