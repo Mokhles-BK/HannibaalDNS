@@ -15,11 +15,20 @@ app = Flask(__name__)
 
 # Initialize shared FilteringEngine instance for DoH (reuses same logic as UDP)
 doh_engine = FilteringEngine()
-UPSTREAM_DNS = config.UPSTREAM_DNS
-UPSTREAM_PORT = config.UPSTREAM_PORT
+
+# Upstream DNS/port are read at call time (not import time), so a
+# HANNIBAALNS_UPSTREAM_* override set after the module is imported — e.g.
+# by a wrapper script — actually changes the upstream used by DoH queries.
+def _upstream_dns():
+    return config.UPSTREAM_DNS
+
+
+def _upstream_port():
+    return config.UPSTREAM_PORT
+
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -298,8 +307,8 @@ def doh_get():
         return Response(f'Invalid DNS message: {e}', status=400, mimetype='text/plain')
 
     client_ip = request.remote_addr or 'unknown'
-    response_bytes = resolve_query(dns_bytes, client_ip, UPSTREAM_DNS, doh_engine,
-                                   UPSTREAM_PORT)
+    response_bytes = resolve_query(dns_bytes, client_ip, _upstream_dns(), doh_engine,
+                                   _upstream_port())
     return Response(response_bytes, mimetype='application/dns-message')
 
 
@@ -315,8 +324,8 @@ def doh_post():
         return Response('Empty request body', status=400, mimetype='text/plain')
 
     client_ip = request.remote_addr or 'unknown'
-    response_bytes = resolve_query(dns_bytes, client_ip, UPSTREAM_DNS, doh_engine,
-                                   UPSTREAM_PORT)
+    response_bytes = resolve_query(dns_bytes, client_ip, _upstream_dns(), doh_engine,
+                                   _upstream_port())
     return Response(response_bytes, mimetype='application/dns-message')
 
 
