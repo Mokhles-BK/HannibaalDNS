@@ -21,6 +21,7 @@ import ssl
 import socket
 import threading
 import time
+import traceback
 
 from dnslib import DNSError
 from filtering import FilteringEngine
@@ -117,30 +118,42 @@ def _ensure_cert(cert_path, key_path):
 def _handle_client(conn, engine, upstream_dns, upstream_port):
     """Read one or more length-prefixed DNS messages from a TLS socket."""
     client_ip = conn.getpeername()[0]
-    buf = b''
-    while True:
-        try:
-            while len(buf) < 2:
-                chunk = conn.recv(4096)
-                if not chunk:
-                    return
-                buf += chunk
-            length = int.from_bytes(buf[:2], 'big')
-            buf = buf[2:]
-            while len(buf) < length:
-                chunk = conn.recv(4096)
-                if not chunk:
-                    return
-                buf += chunk
-            message = buf[:length]
-            buf = buf[length:]
+    try:
+        buf = b''
+        while True:
+            try:
+                while len(buf) < 2:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        return
+                    buf += chunk
+                length = int.from_bytes(buf[:2], 'big')
+                buf = buf[2:]
+                while len(buf) < length:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        return
+                    buf += chunk
+                message = buf[:length]
+                buf = buf[length:]
 
-            response = resolve_query(message, client_ip, upstream_dns, engine,
-                                     upstream_port)
-            conn.sendall(len(response).to_bytes(2, 'big') + response)
-        except (ConnectionError, OSError, DNSError) as e:
-            print(f"DoT client {client_ip} disconnected: {e}")
-            return
+                response = resolve_query(message, client_ip, upstream_dns, engine,
+                                         upstream_port)
+                conn.sendall(len(response).to_bytes(2, 'big') + response)
+            except (ConnectionError, OSError, DNSError) as e:
+                print(f"DoT client {client_ip} disconnected: {e}")
+                return
+    except Exception:
+        # Never let a handler thread die silently: log the traceback and
+        # close the connection below. A bare TypeError here used to strand
+        # the client with no output and no traceback.
+        print(f"DoT client {client_ip} handler error:")
+        traceback.print_exc()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def run_dot_server(upstream_dns=None, port=None, host=None, upstream_port=None):
@@ -175,7 +188,8 @@ def run_dot_server(upstream_dns=None, port=None, host=None, upstream_port=None):
             except (ConnectionError, OSError):
                 continue
             threading.Thread(
-                target=_handle_client, args=(conn, engine, upstream_dns),
+                target=_handle_client,
+                args=(conn, engine, upstream_dns, upstream_port),
                 daemon=True,
             ).start()
     except KeyboardInterrupt:

@@ -115,7 +115,9 @@ def main():
             except OSError:
                 return
             threading.Thread(target=dot_server._handle_client,
-                             args=(conn, engine, '8.8.8.8'), daemon=True).start()
+                             args=(conn, engine, '8.8.8.8',
+                                   dot_server.config.UPSTREAM_PORT),
+                             daemon=True).start()
 
     t = threading.Thread(target=accept_loop, daemon=True)
     t.start()
