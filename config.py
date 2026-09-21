@@ -24,6 +24,13 @@ UPSTREAM_DNS = os.environ.get("HANNIBAALNS_UPSTREAM_DNS", "8.8.8.8")
 # Previously hardcoded to 53 in dns_resolver.resolve_query().
 UPSTREAM_PORT = int(os.environ.get("HANNIBAALNS_UPSTREAM_PORT", "53"))
 
+# Upstream query timeout (seconds). A dead upstream must not hang a
+# transport: dnslib's DNSRecord.send() uses this as its socket timeout,
+# and resolve_query() returns SERVFAIL when it fires. Previously hardcoded
+# to 5 in dns_resolver.resolve_query(); 3s is the "within about 3
+# seconds" requirement from the v1.0 scope.
+UPSTREAM_TIMEOUT = float(os.environ.get("HANNIBAALNS_UPSTREAM_TIMEOUT", "3"))
+
 # ---------------------------------------------------------------------------
 # Transport ports
 # ---------------------------------------------------------------------------

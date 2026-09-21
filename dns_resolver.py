@@ -46,7 +46,8 @@ def resolve_query(raw_request_bytes: bytes, client_ip: str, upstream_dns: str,
     # Forward the query to the upstream DNS server
     try:
         upstream_request = DNSRecord.question(qname, qtype=qtype)
-        raw_response = upstream_request.send(upstream_dns, upstream_port, timeout=5)
+        raw_response = upstream_request.send(
+            upstream_dns, upstream_port, timeout=config.UPSTREAM_TIMEOUT)
         upstream_response = DNSRecord.parse(raw_response)
 
         # Set the transaction ID to match the request
