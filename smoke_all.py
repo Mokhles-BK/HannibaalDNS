@@ -50,7 +50,15 @@ DASHBOARD_ENDPOINTS = [
     "/api/analytics/summary",
     "/api/analytics/top-domains?blocked=false&limit=5",
     "/api/analytics/top-domains?blocked=true&limit=5",
+    "/api/blocklists",
 ]
+
+# The blocklist registry starts empty (step 5a: nothing is blocked until a
+# list is registered). Seed StevenBlack via the real API so the blocking
+# assertions in QUERIES below are backed by actual registry wiring, not a
+# hardcoded default. Idempotent: a second run gets 409 (already registered)
+# and just moves on.
+SEED_BLOCKLIST = config.BLOCKLIST_PRESETS["stevenblack"]
 
 # Dead-upstream behaviour: a query for an unresolvable domain must return
 # SERVFAIL (rcode 2) within the configured timeout, never hang.
@@ -163,6 +171,42 @@ def dashboard_endpoint(path):
         print(f"  ok  GET {path} -> HTTP {status} ({len(body)} bytes)")
 
 
+def seed_blocklist():
+    """Register the StevenBlack preset via the real dashboard API if it
+    isn't already registered. This is what makes the doubleclick.net
+    assertion in QUERIES meaningful under the empty-by-default registry."""
+    import json
+    url = f"http://127.0.0.1:{DOH_PORT}/api/blocklists"
+    body = json.dumps(SEED_BLOCKLIST).encode()
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        r = urllib.request.urlopen(req, timeout=20)
+        print(f"  ok  POST /api/blocklists -> HTTP {r.status} (registered)")
+    except urllib.error.HTTPError as e:
+        if e.code == 409:
+            print("  ok  POST /api/blocklists -> HTTP 409 (already registered)")
+        else:
+            fail(f"POST /api/blocklists: HTTP {e.code}: {e.read()}")
+            return
+    except Exception as e:
+        fail(f"POST /api/blocklists: {type(e).__name__}: {e}")
+        return
+
+    # Confirm it actually loaded domains.
+    try:
+        r = urllib.request.urlopen(url, timeout=10)
+        lists = json.loads(r.read())
+    except Exception as e:
+        fail(f"GET /api/blocklists: {type(e).__name__}: {e}")
+        return
+    match = [l for l in lists if l["url"] == SEED_BLOCKLIST["url"]]
+    if not match or match[0]["entry_count"] < 1:
+        fail(f"StevenBlack list registered but entry_count is 0: {match}")
+    else:
+        print(f"  ok  StevenBlack list loaded, {match[0]['entry_count']} entries")
+
+
 def check_dead_upstream():
     """Assert every transport returns SERVFAIL for a dead upstream."""
     print("=== Dead-upstream SERVFAIL (rcode 2) ===")
@@ -185,6 +229,11 @@ def main():
     dead_mode = "--dead-upstream" in sys.argv
 
     print(f"Smoke test against UDP {UDP_PORT}, DoH {DOH_PORT}, DoT {DOT_PORT}")
+
+    if not dead_mode:
+        print("=== Blocklists (multi-list registry) ===")
+        seed_blocklist()
+
     print("=== Transports ===")
     if not dead_mode:
         # In --dead-upstream mode the upstream is unreachable, so a normal
