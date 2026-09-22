@@ -34,3 +34,9 @@ phase5/frontend/build/
 hannibaaldns.crt
 hannibaaldns.key
 hannibaaldns.cnf
+
+.*.out
+.*.err
+
+.*.out
+.*.err
