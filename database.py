@@ -44,6 +44,11 @@ class Database:
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            # Safe migration: add blocked_by if this DB predates step 5a.
+            cursor.execute("PRAGMA table_info(query_log)")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+            if 'blocked_by' not in existing_cols:
+                cursor.execute('ALTER TABLE query_log ADD COLUMN blocked_by TEXT')
             # Anomaly log table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS anomaly_log (
@@ -109,12 +114,12 @@ class Database:
             conn.commit()
             conn.close()
 
-    def log_query(self, client_ip, domain, query_type, blocked, response_time):
+    def log_query(self, client_ip, domain, query_type, blocked, response_time, blocked_by=None):
         if self.query_callback is not None:
             self.query_callback(client_ip, domain, query_type, blocked, response_time)
 
         try:
-            self.log_queue.put_nowait((client_ip, domain, query_type, blocked, response_time))
+            self.log_queue.put_nowait((client_ip, domain, query_type, blocked, response_time, blocked_by))
         except queue.Full:
             print("[Warning] Log queue is full. Dropping query log entry.")
 
@@ -126,15 +131,15 @@ class Database:
                 item = self.log_queue.get()
                 if item is None:
                     break
-                client_ip, domain, query_type, blocked, response_time = item
+                client_ip, domain, query_type, blocked, response_time, blocked_by = item
                 with self.lock:
                     conn = sqlite3.connect(self.db_path)
                     cursor = conn.cursor()
                     cursor.execute('''
                         INSERT INTO query_log
-                        (client_ip, domain, query_type, blocked, response_time)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (client_ip, domain, query_type, blocked, response_time))
+                        (client_ip, domain, query_type, blocked, response_time, blocked_by)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (client_ip, domain, query_type, blocked, response_time, blocked_by))
                     conn.commit()
                     conn.close()
                 self.log_queue.task_done()

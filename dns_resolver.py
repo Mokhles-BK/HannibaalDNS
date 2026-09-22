@@ -32,13 +32,13 @@ def resolve_query(raw_request_bytes: bytes, client_ip: str, upstream_dns: str,
 
     # Check filtering engine
     start_time = time.time()
-    blocked = engine.is_blocked(qname, client_ip)
+    blocked, blocked_by = engine.check(qname, client_ip)
     response_time = time.time() - start_time
 
     if blocked:
         reply = request.reply()
         reply.header.rcode = RCODE.NXDOMAIN
-        engine.db.log_query(client_ip, qname, qtype, True, response_time)
+        engine.db.log_query(client_ip, qname, qtype, True, response_time, blocked_by)
         return bytes(reply.pack())
 
     reply = request.reply()

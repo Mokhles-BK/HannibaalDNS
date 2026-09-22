@@ -283,6 +283,151 @@ def analytics_summary():
     })
 
 
+# ---------------------------------------------------------------------------
+# Blocklist registry (step 5a). Any http(s) URL can be registered, not just
+# the presets in config.BLOCKLIST_PRESETS — those are just UI shortcuts.
+# Reuses doh_engine.blocklist_manager; UDP/DoT share the same DB so their
+# FilteringEngine instances pick up registry changes on their own refresh
+# cycle (background thread / reload.trigger), same as before.
+# ---------------------------------------------------------------------------
+
+def _is_localhost(req):
+    # remote_addr is normally the IPv4 dotted form for a loopback
+    # connection, but some stacks report the IPv6-mapped form instead.
+    return req.remote_addr in ('127.0.0.1', '::1', '::ffff:127.0.0.1')
+
+
+def _require_localhost():
+    """
+    Shared guard for every blocklist-MUTATING endpoint. Only add_blocklist
+    was actually calling _is_localhost -- delete/toggle/refresh/refresh_all
+    had no guard at all, so any LAN client could remove, disable, or force
+    a refresh of a list despite CLAUDE.md's "localhost only" requirement.
+    Returns a Flask error response to return immediately, or None if the
+    caller is local.
+    """
+    if not _is_localhost(request):
+        return jsonify({'error': 'this endpoint is only allowed from localhost'}), 403
+    return None
+
+
+def _parse_bool(value):
+    """
+    Strict JSON-body boolean parsing. bool(data['enabled']) treats ANY
+    non-empty string -- including "false", "0", "no" -- as True, so a
+    client could never actually disable a list. Only accept real booleans,
+    0/1, or the obvious string spellings; anything else is a client error,
+    not a silently-assumed True.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ('true', '1', 'yes', 'on'):
+            return True
+        if v in ('false', '0', 'no', 'off'):
+            return False
+    raise ValueError(f"'enabled' must be a boolean, not {value!r}")
+
+
+@app.route('/api/blocklists', methods=['GET'])
+def get_blocklists():
+    return jsonify(doh_engine.blocklist_manager.list_lists())
+
+
+@app.route('/api/blocklists', methods=['POST'])
+def add_blocklist():
+    """
+    Register a new list. Any http(s) URL is accepted, not just presets —
+    the dashboard has no auth, so this is restricted to localhost callers
+    to prevent a LAN client from making this server fetch an arbitrary URL.
+
+    Body (JSON): {"name": "...", "url": "...", "format": "hosts|domains|adblock|dnsmasq|wildcard",
+                  "enabled": true}
+    """
+    err = _require_localhost()
+    if err:
+        return err
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'error': 'Request body must be valid JSON'}), 400
+
+    name = data.get('name')
+    url = data.get('url')
+    fmt = data.get('format')
+    try:
+        enabled = _parse_bool(data.get('enabled', True))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    if not name or not url or not fmt:
+        return jsonify({'error': 'name, url, and format are required'}), 400
+
+    try:
+        list_id = doh_engine.blocklist_manager.add_list(name, url, fmt, enabled=enabled)
+    except ValueError as e:
+        # Duplicate URL is a conflict; everything else (bad format, bad
+        # URL, unreachable/unparseable list) is a client error.
+        status = 409 if 'already registered' in str(e) else 400
+        return jsonify({'error': str(e)}), status
+
+    return jsonify(doh_engine.blocklist_manager._get_row(list_id)), 201
+
+
+@app.route('/api/blocklists/<int:list_id>', methods=['DELETE'])
+def delete_blocklist(list_id):
+    err = _require_localhost()
+    if err:
+        return err
+    removed = doh_engine.blocklist_manager.remove_list(list_id)
+    if not removed:
+        return jsonify({'error': f'no blocklist with id {list_id}'}), 404
+    return jsonify({'status': 'ok', 'id': list_id, 'removed': True})
+
+
+@app.route('/api/blocklists/<int:list_id>/toggle', methods=['POST'])
+def toggle_blocklist(list_id):
+    err = _require_localhost()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    if 'enabled' not in data:
+        return jsonify({'error': "body must include 'enabled' (true/false)"}), 400
+    try:
+        enabled = _parse_bool(data['enabled'])
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    updated = doh_engine.blocklist_manager.set_enabled(list_id, enabled)
+    if not updated:
+        return jsonify({'error': f'no blocklist with id {list_id}'}), 404
+    return jsonify(doh_engine.blocklist_manager._get_row(list_id))
+
+
+@app.route('/api/blocklists/<int:list_id>/refresh', methods=['POST'])
+def refresh_blocklist(list_id):
+    err = _require_localhost()
+    if err:
+        return err
+    try:
+        ok = doh_engine.blocklist_manager.refresh_list(list_id)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    return jsonify({'status': 'ok' if ok else 'failed', **doh_engine.blocklist_manager._get_row(list_id)})
+
+
+@app.route('/api/blocklists/refresh', methods=['POST'])
+def refresh_all_blocklists():
+    err = _require_localhost()
+    if err:
+        return err
+    ok = doh_engine.blocklist_manager.refresh_all()
+    return jsonify({'status': 'ok' if ok else 'partial_failure',
+                    'lists': doh_engine.blocklist_manager.list_lists()})
+
+
 # DNS-over-HTTPS (RFC 8484) endpoints
 @app.route('/dns-query', methods=['GET'])
 def doh_get():
