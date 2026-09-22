@@ -1,3 +1,4 @@
 # Normalize line endings for source files so LF is the canonical
 # working-tree form regardless of the authoring platform.
+* text=auto eol=lf
 *.py text=auto eol=lf
