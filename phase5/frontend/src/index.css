@@ -300,6 +300,68 @@ td {
   font-size: 13px;
 }
 
+.blocklists-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+.blocklists-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.blocklists-table th,
+.blocklists-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eee;
+  vertical-align: top;
+}
+.blocklists-table tr.row-disabled {
+  opacity: 0.55;
+}
+.blocklists-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.list-url {
+  font-size: 12px;
+  word-break: break-all;
+  padding: 2px 0 0;
+}
+.blocklists-subheading {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.preset-card {
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.custom-list-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.custom-list-url {
+  flex: 1;
+  min-width: 240px;
+}
+.custom-list-format {
+  padding: 6px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
 .domain-list {
   min-height: 60px;
 }

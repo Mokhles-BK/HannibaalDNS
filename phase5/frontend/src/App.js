@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import AllowlistDenylist from './components/AllowlistDenylist';
 import Analytics from './components/Analytics';
+import Blocklists from './components/Blocklists';
 
 // Hash-based routing: no react-router dependency.
 //   #/             -> dashboard (overview)
 //   #/lists         -> Allowlist / Denylist
+//   #/blocklists     -> Blocklists
 //   #/analytics     -> Analytics
 function App() {
   const [stats, setStats] = useState(null);
@@ -102,6 +104,9 @@ function App() {
         <button className={view === 'lists' ? 'nav-active' : ''} onClick={() => navigate('lists')}>
           Allowlist / Denylist
         </button>
+        <button className={view === 'blocklists' ? 'nav-active' : ''} onClick={() => navigate('blocklists')}>
+          Blocklists
+        </button>
         <button className={view === 'analytics' ? 'nav-active' : ''} onClick={() => navigate('analytics')}>
           Analytics
         </button>
@@ -195,6 +200,7 @@ function App() {
       )}
 
       {view === 'lists' && <AllowlistDenylist />}
+      {view === 'blocklists' && <Blocklists />}
       {view === 'analytics' && <Analytics />}
     </div>
   );
