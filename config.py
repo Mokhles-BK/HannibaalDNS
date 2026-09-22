@@ -107,6 +107,11 @@ BLOCKLIST_PRESETS = {
 # filtering.py, and phase5/backend/app.py.
 DB_PATH = os.environ.get("HANNIBAALNS_DB_PATH", "hannibaaldns.db")
 
+# How long query_log/anomaly_log rows are kept before the background
+# retention thread purges them (step 6). 0 disables automatic purging;
+# the manual POST /api/logs/purge endpoint still works regardless.
+LOG_RETENTION_DAYS = int(os.environ.get("HANNIBAALNS_LOG_RETENTION_DAYS", "30"))
+
 # ---------------------------------------------------------------------------
 # DoT TLS material (auto-generated self-signed cert; see README)
 # ---------------------------------------------------------------------------

@@ -16,6 +16,13 @@ class Database:
         self.writer_thread = threading.Thread(target=self._log_writer_loop, daemon=True)
         self.writer_thread.start()
 
+        # Start background retention-purge thread (step 6). Event, not a
+        # plain sleep, so a future clean-shutdown path can wake and stop it
+        # early instead of waiting up to 24h.
+        self._retention_stop = threading.Event()
+        self.retention_thread = threading.Thread(target=self._retention_loop, daemon=True)
+        self.retention_thread.start()
+
     def init_db(self):
         with self.lock:
             conn = sqlite3.connect(self.db_path)
@@ -165,3 +172,71 @@ class Database:
                 'blocked_queries': row[1] if row[1] else 0,
                 'avg_response_time': row[2] if row[0] and row[2] else 0.0
             }
+
+    # -----------------------------------------------------------------
+    # Log controls (step 6): retention purge, clear-all. CSV export reads
+    # directly via phase5/backend/app.py's get_db(), no method needed here.
+    # -----------------------------------------------------------------
+
+    def purge_older_than(self, days):
+        """
+        Delete query_log and anomaly_log rows older than `days` days.
+        Returns (queries_deleted, anomalies_deleted). Takes self.lock like
+        every other write path here, so this is safe to call concurrently
+        with the background writer thread.
+
+        Note: SQLite's datetime('now') has second-level granularity, so
+        purge_older_than(0) called within the same second a row was
+        written can leave that row behind (timestamp == now, not <).
+        Irrelevant at real retention windows (days >= 1); only matters if
+        something calls this with days=0 as a "delete everything" shortcut
+        -- use clear_all_logs() for that instead.
+        """
+        with self.lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM query_log WHERE timestamp < datetime('now', ?)",
+                (f'-{int(days)} days',),
+            )
+            q_deleted = cursor.rowcount
+            cursor.execute(
+                "DELETE FROM anomaly_log WHERE timestamp < datetime('now', ?)",
+                (f'-{int(days)} days',),
+            )
+            a_deleted = cursor.rowcount
+            conn.commit()
+            conn.close()
+            return q_deleted, a_deleted
+
+    def clear_all_logs(self):
+        """Delete every row from query_log and anomaly_log. Destructive,
+        no retention window applied -- callers must confirm with the user
+        (the dashboard route requires an explicit confirm flag)."""
+        with self.lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM query_log")
+            q_deleted = cursor.rowcount
+            cursor.execute("DELETE FROM anomaly_log")
+            a_deleted = cursor.rowcount
+            conn.commit()
+            conn.close()
+            return q_deleted, a_deleted
+
+    def _retention_loop(self):
+        """Daemon thread: purge rows older than config.LOG_RETENTION_DAYS
+        once at startup and then once every 24h. Runs in addition to (not
+        instead of) the manual /api/logs/purge endpoint -- this just means
+        a dev instance left running for weeks doesn't grow the DB forever
+        even if nobody opens the dashboard."""
+        while True:
+            try:
+                if config.LOG_RETENTION_DAYS > 0:
+                    q, a = self.purge_older_than(config.LOG_RETENTION_DAYS)
+                    if q or a:
+                        print(f"[Retention] purged {q} query_log + {a} anomaly_log "
+                              f"rows older than {config.LOG_RETENTION_DAYS} days")
+            except Exception as e:
+                print(f"[Error] Retention purge failed: {e}")
+            self._retention_stop.wait(24 * 60 * 60)

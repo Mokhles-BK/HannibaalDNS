@@ -1,4 +1,6 @@
 import os
+import csv
+import io
 import base64
 import sqlite3
 from flask import Flask, request, jsonify, Response
@@ -428,7 +430,140 @@ def refresh_all_blocklists():
                     'lists': doh_engine.blocklist_manager.list_lists()})
 
 
+# ---------------------------------------------------------------------------
+# Log controls (step 6): retention purge, clear logs, CSV export.
+# Purge and clear are destructive/mutating -> localhost-only, same guard as
+# the blocklist-mutating routes above. Export is read-only, same convention
+# as the /api/analytics/* GETs (no localhost guard).
+# ---------------------------------------------------------------------------
+
+@app.route('/api/logs/purge', methods=['POST'])
+def purge_logs():
+    """
+    Delete query_log/anomaly_log rows older than N days (default:
+    config.LOG_RETENTION_DAYS). This runs automatically once a day in the
+    background (database.py's retention thread); this endpoint is the
+    on-demand "purge now" the dashboard calls.
+
+    Body (JSON, optional): {"days": 14}
+    """
+    err = _require_localhost()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    days = data.get('days', config.LOG_RETENTION_DAYS)
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        return jsonify({'error': f"'days' must be an integer, not {days!r}"}), 400
+    if days < 0:
+        return jsonify({'error': "'days' must be >= 0"}), 400
+
+    q_deleted, a_deleted = doh_engine.db.purge_older_than(days)
+    return jsonify({
+        'status': 'ok',
+        'days': days,
+        'queries_deleted': q_deleted,
+        'anomalies_deleted': a_deleted,
+    })
+
+
+@app.route('/api/logs/clear', methods=['POST'])
+def clear_logs():
+    """
+    Delete ALL query_log and anomaly_log rows, no retention window.
+    Destructive and irreversible, so requires an explicit confirm flag
+    rather than acting on any POST to this URL.
+
+    Body (JSON): {"confirm": true}
+    """
+    err = _require_localhost()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    if data.get('confirm') is not True:
+        return jsonify({'error': "body must include \"confirm\": true"}), 400
+
+    q_deleted, a_deleted = doh_engine.db.clear_all_logs()
+    return jsonify({
+        'status': 'ok',
+        'queries_deleted': q_deleted,
+        'anomalies_deleted': a_deleted,
+    })
+
+
+@app.route('/api/logs/export', methods=['GET'])
+def export_logs():
+    """
+    CSV export of query_log or anomaly_log.
+
+    Query params:
+      type   'queries' (default) or 'anomalies'
+      hours  optional window, e.g. ?hours=24 (default: all rows)
+    """
+    log_type = request.args.get('type', default='queries')
+    if log_type not in ('queries', 'anomalies'):
+        return jsonify({'error': "type must be 'queries' or 'anomalies'"}), 400
+
+    hours = request.args.get('hours', default=None, type=int)
+    if hours is not None and hours < 1:
+        return jsonify({'error': "'hours' must be >= 1"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    if log_type == 'queries':
+        columns = ['id', 'client_ip', 'domain', 'query_type', 'blocked',
+                   'response_time', 'blocked_by', 'timestamp']
+        where = "WHERE timestamp > datetime('now', '-' || ? || ' hours')" if hours else ''
+        cur.execute(f'''
+            SELECT {', '.join(columns)} FROM query_log
+            {where}
+            ORDER BY timestamp DESC
+        ''', (hours,) if hours else ())
+        filename = 'query_log.csv'
+    else:
+        columns = ['id', 'domain', 'client_ip', 'score', 'reasons', 'timestamp']
+        where = "WHERE timestamp > datetime('now', '-' || ? || ' hours')" if hours else ''
+        cur.execute(f'''
+            SELECT {', '.join(columns)} FROM anomaly_log
+            {where}
+            ORDER BY timestamp DESC
+        ''', (hours,) if hours else ())
+        filename = 'anomaly_log.csv'
+
+    rows = cur.fetchall()
+    conn.close()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(columns)
+    writer.writerows(rows)
+
+    return Response(
+        buf.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
 # DNS-over-HTTPS (RFC 8484) endpoints
+# ---------------------------------------------------------------------------
+
+def _doh_handle(dns_bytes, identifier):
+    try:
+        from dnslib import DNSRecord
+        DNSRecord.parse(dns_bytes)
+    except DNSError as e:
+        return Response(f'Invalid DNS message: {e}', status=400, mimetype='text/plain')
+
+    response_bytes = resolve_query(dns_bytes, identifier, _upstream_dns(), doh_engine,
+                                   _upstream_port())
+    return Response(response_bytes, mimetype='application/dns-message')
+
+
 @app.route('/dns-query', methods=['GET'])
 def doh_get():
     """GET /dns-query?dns=<base64url-encoded-DNS-message>"""
@@ -442,19 +577,8 @@ def doh_get():
     except Exception as e:
         return Response(f'Invalid base64url encoding: {e}', status=400, mimetype='text/plain')
 
-    try:
-        # Validate the payload is a real DNS message before forwarding it.
-        # Without this, a base64url string that decodes to garbage (e.g.
-        # '!!!bad' -> 2 bytes) leaks an unhandled DNSError as a 500.
-        from dnslib import DNSRecord
-        DNSRecord.parse(dns_bytes)
-    except DNSError as e:
-        return Response(f'Invalid DNS message: {e}', status=400, mimetype='text/plain')
-
     client_ip = request.remote_addr or 'unknown'
-    response_bytes = resolve_query(dns_bytes, client_ip, _upstream_dns(), doh_engine,
-                                   _upstream_port())
-    return Response(response_bytes, mimetype='application/dns-message')
+    return _doh_handle(dns_bytes, client_ip)
 
 
 @app.route('/dns-query', methods=['POST'])
@@ -469,9 +593,40 @@ def doh_post():
         return Response('Empty request body', status=400, mimetype='text/plain')
 
     client_ip = request.remote_addr or 'unknown'
-    response_bytes = resolve_query(dns_bytes, client_ip, _upstream_dns(), doh_engine,
-                                   _upstream_port())
-    return Response(response_bytes, mimetype='application/dns-message')
+    return _doh_handle(dns_bytes, client_ip)
+
+
+# Device-named DoH endpoints (step 6). Same wire protocol as /dns-query,
+# but the URL's <device_name> segment is used as the filtering/logging
+# identifier instead of request.remote_addr. This is what makes per-device
+# profiles and per-device analytics possible for clients behind NAT/a LAN
+# router, where remote_addr is identical for every device: point each
+# device's DoH config at /dns-query/<its name> and it gets its own row in
+# client_profiles and its own slice of query_log, the same as if it had a
+# distinct IP. Reuses client_profiles/query_log as-is (both key on a plain
+# TEXT column, so no schema change) -- prefixed "device:" so a device name
+# can never collide with a real IP address string.
+@app.route('/dns-query/<device_name>', methods=['GET'])
+def doh_get_named(device_name):
+    dns_param = request.args.get('dns')
+    if not dns_param:
+        return Response('Missing dns parameter', status=400, mimetype='text/plain')
+    try:
+        dns_bytes = base64.urlsafe_b64decode(dns_param + '=' * (-len(dns_param) % 4))
+    except Exception as e:
+        return Response(f'Invalid base64url encoding: {e}', status=400, mimetype='text/plain')
+    return _doh_handle(dns_bytes, f'device:{device_name}')
+
+
+@app.route('/dns-query/<device_name>', methods=['POST'])
+def doh_post_named(device_name):
+    content_type = request.headers.get('Content-Type', '')
+    if content_type != 'application/dns-message':
+        return Response('Content-Type must be application/dns-message', status=415, mimetype='text/plain')
+    dns_bytes = request.get_data()
+    if not dns_bytes:
+        return Response('Empty request body', status=400, mimetype='text/plain')
+    return _doh_handle(dns_bytes, f'device:{device_name}')
 
 
 if __name__ == '__main__':
