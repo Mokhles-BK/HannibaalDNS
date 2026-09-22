@@ -125,6 +125,33 @@ class AnomalyDetector:
             current_time = time.time()
 
             with self.lock:
+                # Prune every dict keyed by domain down to domains with at
+                # least one query inside the current window. Without this,
+                # query_history/client_ip_map/entropy_cache each grow by one
+                # entry per DISTINCT domain ever seen and never shrink --
+                # confirmed: 3000 one-off domains -> 3000 permanent entries
+                # in all three, even after they go idle. A long-running
+                # resolver seeing thousands of unique domains a day would
+                # accumulate this forever.
+                stale_domains = []
+                for domain, timestamps in self.query_history.items():
+                    while timestamps and current_time - timestamps[0] > self.window_size:
+                        timestamps.popleft()
+                    if not timestamps:
+                        stale_domains.append(domain)
+                for domain in stale_domains:
+                    del self.query_history[domain]
+                    self.client_ip_map.pop(domain, None)
+                    self.entropy_cache.pop(domain, None)
+
+                # last_anomaly_logged entries past cooldown no longer
+                # suppress anything (the cooldown check itself would treat
+                # them as expired) -- same unbounded-growth shape, same fix.
+                stale_keys = [k for k, t in self.last_anomaly_logged.items()
+                             if current_time - t > self.anomaly_cooldown]
+                for k in stale_keys:
+                    del self.last_anomaly_logged[k]
+
                 items = list(self.query_history.items())
 
             for domain, timestamps in items:
