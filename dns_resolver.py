@@ -36,7 +36,6 @@ def resolve_query(raw_request_bytes: bytes, client_ip: str, upstream_dns: str,
     response_time = time.time() - start_time
 
     if blocked:
-        print(f"Blocking {qname} for {client_ip}")
         reply = request.reply()
         reply.header.rcode = RCODE.NXDOMAIN
         engine.db.log_query(client_ip, qname, qtype, True, response_time)
@@ -61,8 +60,11 @@ def resolve_query(raw_request_bytes: bytes, client_ip: str, upstream_dns: str,
         response_time = time.time() - start_time
         engine.db.log_query(client_ip, qname, qtype, False, response_time)
     except Exception as e:
-        print(f"Error forwarding DNS query: {e}")
-        # Return SERVFAIL if there's an error
+        # Return SERVFAIL if there's an error. Always print what happened —
+        # this was silently swallowed before, which made the DoT upstream
+        # hang undiagnosable for a long time. Never remove this print again
+        # without replacing it with an equivalent log/DB field.
+        print(f"Upstream resolution failed for {qname}: {type(e).__name__}: {e}")
         reply = request.reply()
         reply.header.rcode = RCODE.SERVFAIL
         response_time = time.time() - start_time

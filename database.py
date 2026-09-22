@@ -5,8 +5,8 @@ from datetime import datetime
 import config
 
 class Database:
-    def __init__(self, db_path=config.DB_PATH, query_callback=None):
-        self.db_path = db_path
+    def __init__(self, db_path=None, query_callback=None):
+        self.db_path = config.DB_PATH if db_path is None else db_path
         self.lock = threading.Lock()
         self.log_queue = queue.Queue(maxsize=1000)
         self.query_callback = query_callback

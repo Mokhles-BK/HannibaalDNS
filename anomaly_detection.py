@@ -7,8 +7,8 @@ from collections import defaultdict, deque
 import config
 
 class AnomalyDetector:
-    def __init__(self, db_path=config.DB_PATH, window_size=60):
-        self.db_path = db_path
+    def __init__(self, db_path=None, window_size=60):
+        self.db_path = config.DB_PATH if db_path is None else db_path
         self.window_size = window_size  # seconds
         self.lock = threading.Lock()
         self.query_history = defaultdict(deque)

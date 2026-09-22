@@ -7,8 +7,9 @@ from anomaly_detection import AnomalyDetector
 import config
 
 class FilteringEngine:
-    def __init__(self, blocklist_url=config.BLOCKLIST_URL, db_path=config.DB_PATH):
-        self.blocklist_url = blocklist_url
+    def __init__(self, blocklist_url=None, db_path=None):
+        self.blocklist_url = config.BLOCKLIST_URL if blocklist_url is None else blocklist_url
+        db_path = config.DB_PATH if db_path is None else db_path
         self.blocked_domains = set()
         self.allowlist = set(["localhost"])
         self.lock = threading.Lock()
