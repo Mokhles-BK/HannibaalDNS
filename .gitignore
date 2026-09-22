@@ -29,3 +29,5 @@ hannibaaldns.key
 hannibaaldns.cnf
 .*.out
 .*.err
+
+blocklist_cache/
