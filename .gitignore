@@ -31,3 +31,5 @@ hannibaaldns.cnf
 .*.err
 
 blocklist_cache/
+
+.claude/
