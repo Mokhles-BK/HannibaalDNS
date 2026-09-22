@@ -55,6 +55,52 @@ BLOCKLIST_URL = os.environ.get(
 )
 
 # ---------------------------------------------------------------------------
+# Named blocklist presets (step 5a)
+# ---------------------------------------------------------------------------
+# Convenience shortcuts surfaced in the UI. Every URL below was verified with
+# `curl -sI` and returned HTTP 200 at the time of writing. They are NOT a
+# whitelist: the blocklist registry accepts any http(s) URL a user submits,
+# checked live before acceptance. See BLOCKLIST_URL above for the default.
+#
+# Format notes (relevant once parsing is implemented):
+#   - StevenBlack: hosts format (0.0.0.0 domain)
+#   - OISD:       adblock format (||domain^)
+#   - HaGeZi:     dnsmasq format (plain "# domain"), also adblock format
+#   - AdGuard:    adblock format (||domain^)
+BLOCKLIST_PRESETS = {
+    "stevenblack": {
+        "name": "StevenBlack hosts",
+        "url": "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+        "format": "hosts",
+    },
+    "oisd_small": {
+        "name": "OISD small",
+        "url": "https://small.oisd.nl",
+        "format": "adblock",
+    },
+    "oisd_big": {
+        "name": "OISD big",
+        "url": "https://big.oisd.nl",
+        "format": "adblock",
+    },
+    "hagezi_light": {
+        "name": "HaGeZi Multi LIGHT",
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/light.txt",
+        "format": "dnsmasq",
+    },
+    "hagezi_multi": {
+        "name": "HaGeZi Multi NORMAL",
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/dnsmasq/multi.txt",
+        "format": "dnsmasq",
+    },
+    "adguard_base": {
+        "name": "AdGuard DNS filter (base)",
+        "url": "https://raw.githubusercontent.com/AdguardTeam/AdguardFilters/master/BaseFilter/sections/general_url.txt",
+        "format": "adblock",
+    },
+}
+
+# ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
 # Previously the default arg repeated across database.py, anomaly_detection.py,
