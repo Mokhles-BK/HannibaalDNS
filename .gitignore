@@ -6,37 +6,26 @@ __pycache__/
 # Databases
 *.db
 *.sqlite
-
 # Process IDs
 *.pid
-
 # Virtual environments
 venv/
 .env
-
 # Logs
 *.log
-
 # Build artifacts
 *.egg
 *.egg-info
 *.dist-info
 build/
 dist/
-*.egg-info
-
 # Node / React frontend
 node_modules/
 phase5/frontend/node_modules/
 phase5/frontend/build/
-
 # Auto-generated DoT TLS material (created on first dot_server.py run)
 hannibaaldns.crt
 hannibaaldns.key
 hannibaaldns.cnf
-
-.*.out
-.*.err
-
 .*.out
 .*.err
