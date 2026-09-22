@@ -58,7 +58,7 @@ def queries():
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-        SELECT client_ip, domain, query_type, blocked, response_time, timestamp
+        SELECT client_ip, domain, query_type, blocked, response_time, timestamp, blocked_by
         FROM query_log
         ORDER BY timestamp DESC
         LIMIT ?
